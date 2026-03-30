@@ -1,0 +1,30 @@
+services:
+  mysecondmind:
+    build: .
+    container_name: mysecondmind
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./vault:/app/vault
+      - ./audio:/app/audio
+      - ./ai-knowledge:/app/ai-knowledge
+      - ./data:/app/data
+    networks:
+      - traefik_proxy
+    labels:
+      - "traefik.enable=true"
+      # ── Router ──────────────────────────────────────────────────────────────
+      - "traefik.http.routers.mysecondmind.rule=Host(`${DOMAIN}`)"
+      - "traefik.http.routers.mysecondmind.entrypoints=websecure"
+      - "traefik.http.routers.mysecondmind.tls.certresolver=letsencrypt"
+      # ── Authentik forward-auth middleware ────────────────────────────────────
+      # Replace "authentik@file" with your actual Traefik middleware reference.
+      # If you define it via Docker labels in the Authentik outpost, use e.g.:
+      #   "authentik-proxy@docker"
+      - "traefik.http.routers.mysecondmind.middlewares=${AUTHENTIK_MIDDLEWARE}"
+      # ── Service ──────────────────────────────────────────────────────────────
+      - "traefik.http.services.mysecondmind.loadbalancer.server.port=8000"
+
+networks:
+  traefik_proxy:
+    external: true

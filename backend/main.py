@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.config import BASE_DIR, AUDIO_DIR
@@ -13,25 +13,33 @@ from backend.services.ingest import ingest
 from backend.services.graph import rebuild_graph, build_graph_response
 from backend.services.learner import consolidate_preferences
 from backend.services.watcher import VaultWatcher
+from backend.services.validator import validation_loop, record_activity
+from backend.services.llm import provider_status
 
 
 _watcher: VaultWatcher | None = None
+_validator_task: asyncio.Task | None = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _watcher
+    global _watcher, _validator_task
     await init_db()
 
-    # Start vault file watcher
+    # Start vault file watcher (thread-based)
     loop = asyncio.get_event_loop()
     _watcher = VaultWatcher(loop)
     _watcher.start()
+
+    # Start idle cross-validator (async background task)
+    _validator_task = asyncio.create_task(validation_loop())
 
     yield
 
     if _watcher:
         _watcher.stop()
+    if _validator_task:
+        _validator_task.cancel()
 
 
 app = FastAPI(
@@ -60,6 +68,8 @@ async def ingest_content(request: IngestRequest, background_tasks: BackgroundTas
     if not request.url and not request.text:
         raise HTTPException(status_code=400, detail="Provide either 'url' or 'text'")
 
+    record_activity()
+
     async with await get_db() as db:
         note = await ingest(
             db,
@@ -68,9 +78,7 @@ async def ingest_content(request: IngestRequest, background_tasks: BackgroundTas
             title=request.title,
         )
 
-    # Rebuild graph in background after ingesting new content
     background_tasks.add_task(_rebuild_graph_bg)
-
     return {"status": "ok", "note": note}
 
 
@@ -85,14 +93,12 @@ async def list_notes():
 
 @app.get("/notes/{note_id}")
 async def get_note(note_id: str):
-    """Get a single note by ID."""
+    """Get a single note by ID, including its file content."""
     from backend.db import get_all_notes
     async with await get_db() as db:
         notes = await get_all_notes(db)
     for n in notes:
         if n["id"] == note_id:
-            # Also return file content
-            from backend.config import BASE_DIR
             fp = BASE_DIR / n["file_path"]
             if fp.exists():
                 n["content"] = fp.read_text(encoding="utf-8")
@@ -120,6 +126,7 @@ async def get_audio(note_id: str):
 @app.post("/rebuild-graph")
 async def trigger_rebuild():
     """Manually trigger a full graph rebuild (wikilink extraction + HITS)."""
+    record_activity()
     async with await get_db() as db:
         await rebuild_graph(db)
     return {"status": "ok", "message": "Graph rebuilt"}
@@ -128,6 +135,7 @@ async def trigger_rebuild():
 @app.post("/consolidate-preferences")
 async def trigger_consolidation():
     """Manually trigger preference consolidation from edit log."""
+    record_activity()
     async with await get_db() as db:
         await consolidate_preferences(db)
     return {"status": "ok", "message": "Preferences consolidated"}
@@ -135,7 +143,11 @@ async def trigger_consolidation():
 
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    """Health check including LLM provider availability."""
+    return {
+        "status": "ok",
+        "providers": provider_status(),
+    }
 
 
 # ── Background helpers ─────────────────────────────────────────────────────────
@@ -146,7 +158,6 @@ async def _rebuild_graph_bg():
 
 
 # ── Static files (frontend) ────────────────────────────────────────────────────
-# Serve frontend from /app/frontend — mounted last so API routes take priority
 frontend_dir = BASE_DIR / "frontend"
 if frontend_dir.exists():
     app.mount("/", StaticFiles(directory=str(frontend_dir), html=True), name="frontend")

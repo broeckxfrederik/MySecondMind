@@ -77,7 +77,13 @@ async def rebuild_graph(db: aiosqlite.Connection):
     """
     Scans all vault markdown files, rebuilds edges from [[wikilinks]],
     then runs HITS + Jaccard scoring.
+    Clears all edges and scores first so stale data never survives a rebuild.
     """
+    # Wipe edges and scores — rebuild will repopulate from scratch
+    await db.execute("DELETE FROM edges")
+    await db.execute("DELETE FROM hub_scores")
+    await db.commit()
+
     all_notes = await get_all_notes(db)
 
     # Prune notes whose files no longer exist on disk

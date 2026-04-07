@@ -1,7 +1,9 @@
+import json
 import re
 import httpx
 from bs4 import BeautifulSoup
 from dataclasses import dataclass
+from fastapi import HTTPException
 
 
 @dataclass
@@ -13,6 +15,10 @@ class ScrapedPage:
 
 def _is_reddit(url: str) -> bool:
     return bool(re.search(r"(reddit\.com|redd\.it)", url))
+
+
+def _is_medium(url: str) -> bool:
+    return bool(re.search(r"medium\.com", url))
 
 
 async def _scrape_reddit(url: str, client: httpx.AsyncClient) -> ScrapedPage:
@@ -58,6 +64,63 @@ async def _scrape_reddit(url: str, client: httpx.AsyncClient) -> ScrapedPage:
     return ScrapedPage(title=title, text=text, url=canonical)
 
 
+async def _scrape_medium(url: str, client: httpx.AsyncClient) -> ScrapedPage:
+    """
+    Medium blocks standard scraping with 403. Use their unofficial ?format=json
+    endpoint which returns the full story content. Medium prepends a )]}'\\n XSSI
+    prefix that must be stripped before parsing.
+    """
+    headers = {
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                      "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/json",
+    }
+    json_url = url.split("?")[0].rstrip("/") + "?format=json"
+    resp = await client.get(json_url, headers=headers)
+    resp.raise_for_status()
+
+    # Strip XSSI prefix "])}'\n" that Medium prepends
+    raw = resp.text
+    if raw.startswith("])}'\n"):
+        raw = raw[5:]
+    elif raw.startswith(")]}'"):
+        raw = raw[4:]
+
+    data = json.loads(raw)
+
+    # Navigate Medium's JSON structure
+    payload = data.get("payload", {})
+    post_value = payload.get("value", {})
+
+    title = post_value.get("title", "") or post_value.get("slug", "Medium Article")
+
+    # Extract paragraph content
+    content = post_value.get("content", {})
+    body_model = content.get("bodyModel", {})
+    paragraphs = body_model.get("paragraphs", [])
+
+    parts = []
+    for para in paragraphs:
+        ptype = para.get("type", "")
+        ptext = para.get("text", "").strip()
+        if not ptext:
+            continue
+        # Type 3 = H1, 8 = H2, 9 = H3, 1 = P, 6 = BLOCKQUOTE, 4 = IMAGE caption
+        if ptype in (3,):
+            parts.append(f"# {ptext}")
+        elif ptype in (8, 9):
+            parts.append(f"## {ptext}")
+        elif ptext:
+            parts.append(ptext)
+
+    text = "\n\n".join(parts) if parts else title
+
+    if len(text) > 12000:
+        text = text[:12000] + "\n\n[... content truncated ...]"
+
+    return ScrapedPage(title=title, text=text, url=url)
+
+
 async def scrape_url(url: str) -> ScrapedPage:
     headers = {
         "User-Agent": (
@@ -65,12 +128,28 @@ async def scrape_url(url: str) -> ScrapedPage:
             "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         )
     }
-    async with httpx.AsyncClient(follow_redirects=True, timeout=30.0) as client:
-        if _is_reddit(url):
-            return await _scrape_reddit(url, client)
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=30.0) as client:
+            if _is_reddit(url):
+                return await _scrape_reddit(url, client)
 
-        response = await client.get(url, headers=headers)
-        response.raise_for_status()
+            if _is_medium(url):
+                return await _scrape_medium(url, client)
+
+            response = await client.get(url, headers=headers)
+            response.raise_for_status()
+
+    except httpx.HTTPStatusError as e:
+        status = e.response.status_code
+        if status == 403:
+            raise HTTPException(
+                status_code=422,
+                detail=f"The site blocked scraping (403 Forbidden): {url}. "
+                       "Try pasting the article text directly instead."
+            )
+        raise HTTPException(status_code=422, detail=f"Failed to fetch URL (HTTP {status}): {url}")
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=422, detail=f"Could not reach URL: {e}")
 
     soup = BeautifulSoup(response.text, "lxml")
 
@@ -96,7 +175,6 @@ async def scrape_url(url: str) -> ScrapedPage:
     )
 
     if content_node:
-        # Preserve paragraph structure
         paragraphs = []
         for elem in content_node.find_all(["p", "h1", "h2", "h3", "h4", "li", "blockquote"]):
             txt = elem.get_text(separator=" ", strip=True)
@@ -106,7 +184,6 @@ async def scrape_url(url: str) -> ScrapedPage:
     else:
         text = soup.get_text(separator="\n", strip=True)
 
-    # Trim to ~12k chars to stay within token limits
     if len(text) > 12000:
         text = text[:12000] + "\n\n[... content truncated ...]"
 

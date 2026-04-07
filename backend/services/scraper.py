@@ -1,3 +1,4 @@
+import asyncio
 import json
 import re
 import httpx
@@ -16,10 +17,6 @@ class ScrapedPage:
 
 def _is_reddit(url: str) -> bool:
     return bool(re.search(r"(reddit\.com|redd\.it)", url))
-
-
-def _is_medium(url: str) -> bool:
-    return bool(re.search(r"medium\.com", url))
 
 
 async def _scrape_reddit(url: str, client: httpx.AsyncClient) -> ScrapedPage:
@@ -47,44 +44,6 @@ async def _scrape_reddit(url: str, client: httpx.AsyncClient) -> ScrapedPage:
 
     text = "\n\n".join(parts) or title
     return ScrapedPage(title=title, text=text[:12000], url=canonical)
-
-
-async def _scrape_medium(url: str, client: httpx.AsyncClient) -> ScrapedPage:
-    """Use Medium's unofficial ?format=json API (strips XSSI prefix)."""
-    headers = {
-        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-                      "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "application/json",
-    }
-    resp = await client.get(url.split("?")[0].rstrip("/") + "?format=json", headers=headers)
-    resp.raise_for_status()
-
-    raw = resp.text
-    for prefix in ("])}'\n", ")]}'"):
-        if raw.startswith(prefix):
-            raw = raw[len(prefix):]
-            break
-
-    data = json.loads(raw)
-    post_value = data.get("payload", {}).get("value", {})
-    title = post_value.get("title", "") or post_value.get("slug", "Medium Article")
-
-    paragraphs = post_value.get("content", {}).get("bodyModel", {}).get("paragraphs", [])
-    parts = []
-    for para in paragraphs:
-        ptext = para.get("text", "").strip()
-        if not ptext:
-            continue
-        ptype = para.get("type", 0)
-        if ptype == 3:
-            parts.append(f"# {ptext}")
-        elif ptype in (8, 9):
-            parts.append(f"## {ptext}")
-        else:
-            parts.append(ptext)
-
-    text = "\n\n".join(parts) if parts else title
-    return ScrapedPage(title=title, text=text[:12000], url=url)
 
 
 def _extract_title(html: str, url: str) -> str:
@@ -126,38 +85,17 @@ def _bs_fallback(html: str, url: str) -> ScrapedPage:
     return ScrapedPage(title=title, text=text[:12000], url=url)
 
 
-async def scrape_url(url: str) -> ScrapedPage:
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        )
-    }
-    try:
-        async with httpx.AsyncClient(follow_redirects=True, timeout=30.0) as client:
-            if _is_reddit(url):
-                return await _scrape_reddit(url, client)
+async def _trafilatura_fetch(url: str) -> str | None:
+    """
+    Run trafilatura.fetch_url() in a thread (it's synchronous).
+    trafilatura uses its own headers and retry logic designed to bypass
+    common anti-scraping measures.
+    """
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, trafilatura.fetch_url, url)
 
-            if _is_medium(url):
-                return await _scrape_medium(url, client)
 
-            response = await client.get(url, headers=headers)
-            response.raise_for_status()
-
-    except httpx.HTTPStatusError as e:
-        status = e.response.status_code
-        if status == 403:
-            raise HTTPException(
-                status_code=422,
-                detail=f"The site blocked scraping (403). Try pasting the article text directly."
-            )
-        raise HTTPException(status_code=422, detail=f"Failed to fetch URL (HTTP {status}): {url}")
-    except httpx.RequestError as e:
-        raise HTTPException(status_code=422, detail=f"Could not reach URL: {e}")
-
-    html = response.text
-
-    # ── Primary: trafilatura ────────────────────────────────────────────────────
+def _trafilatura_extract(html: str, url: str) -> ScrapedPage | None:
     extracted = trafilatura.extract(
         html,
         url=url,
@@ -166,11 +104,56 @@ async def scrape_url(url: str) -> ScrapedPage:
         no_fallback=False,
         favor_recall=True,
     )
+    if not extracted or len(extracted.strip()) < 200:
+        return None
+    return ScrapedPage(title=_extract_title(html, url), text=extracted[:12000], url=url)
 
-    if extracted and len(extracted.strip()) > 200:
-        title = _extract_title(html, url)
-        text = extracted[:12000]
-        return ScrapedPage(title=title, text=text, url=url)
 
-    # ── Fallback: BeautifulSoup ─────────────────────────────────────────────────
+async def scrape_url(url: str) -> ScrapedPage:
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        )
+    }
+
+    # ── Reddit: dedicated JSON API ─────────────────────────────────────────────
+    if _is_reddit(url):
+        try:
+            async with httpx.AsyncClient(follow_redirects=True, timeout=30.0) as client:
+                return await _scrape_reddit(url, client)
+        except httpx.HTTPStatusError as e:
+            raise HTTPException(status_code=422, detail=f"Reddit fetch failed (HTTP {e.response.status_code})")
+        except httpx.RequestError as e:
+            raise HTTPException(status_code=422, detail=f"Could not reach Reddit: {e}")
+
+    # ── General: try trafilatura fetcher first (best anti-block headers) ───────
+    html = await _trafilatura_fetch(url)
+    if html:
+        result = _trafilatura_extract(html, url)
+        if result:
+            return result
+        # trafilatura fetched but extracted too little — try BS fallback on same html
+        return _bs_fallback(html, url)
+
+    # ── trafilatura fetch failed (blocked/timeout) — try httpx ────────────────
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=30.0) as client:
+            response = await client.get(url, headers=headers)
+            response.raise_for_status()
+    except httpx.HTTPStatusError as e:
+        status = e.response.status_code
+        if status == 403:
+            raise HTTPException(
+                status_code=422,
+                detail="The site blocked scraping (403). Paste the article text directly instead."
+            )
+        raise HTTPException(status_code=422, detail=f"Failed to fetch URL (HTTP {status}): {url}")
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=422, detail=f"Could not reach URL: {e}")
+
+    html = response.text
+    result = _trafilatura_extract(html, url)
+    if result:
+        return result
     return _bs_fallback(html, url)

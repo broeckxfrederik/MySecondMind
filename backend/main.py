@@ -1,7 +1,7 @@
 import asyncio
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, File, UploadFile, Form
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -86,6 +86,43 @@ async def ingest_content(request: IngestRequest, background_tasks: BackgroundTas
             text=request.text,
             title=request.title,
         )
+
+    background_tasks.add_task(_rebuild_graph_bg)
+    return {"status": "ok", "note": note}
+
+
+@app.post("/upload")
+async def upload_file(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    title: str = Form(default=""),
+):
+    """
+    Upload an ePub or PDF file for ingestion.
+    Extracts text, runs full pipeline (summarize → TTS → save to vault + DB).
+    """
+    MAX_BYTES = 20 * 1024 * 1024  # 20 MB
+    data = await file.read()
+    if len(data) > MAX_BYTES:
+        raise HTTPException(status_code=413, detail="File too large (max 20 MB)")
+
+    fname = (file.filename or "").lower()
+    if fname.endswith(".epub"):
+        from backend.services.parsers import parse_epub
+        doc_title, text = parse_epub(data)
+    elif fname.endswith(".pdf"):
+        from backend.services.parsers import parse_pdf
+        doc_title, text = parse_pdf(data)
+    else:
+        raise HTTPException(status_code=415, detail="Unsupported format — upload a .epub or .pdf file")
+
+    if not text.strip():
+        raise HTTPException(status_code=422, detail="Could not extract any text from the file")
+
+    final_title = title.strip() or doc_title
+    record_activity()
+    async with get_db() as db:
+        note = await ingest(db, text=text, title=final_title)
 
     background_tasks.add_task(_rebuild_graph_bg)
     return {"status": "ok", "note": note}

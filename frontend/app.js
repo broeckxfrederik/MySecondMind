@@ -112,25 +112,35 @@ async function doIngest() {
   const url = document.getElementById("ingest-url").value.trim();
   const text = document.getElementById("ingest-text").value.trim();
   const title = document.getElementById("ingest-title").value.trim();
+  const fileInput = document.getElementById("file-upload");
+  const file = fileInput.files[0];
   const status = document.getElementById("ingest-status");
   const btn = document.getElementById("ingest-btn");
   const label = document.getElementById("ingest-btn-label");
 
-  if (!url && !text) {
-    setStatus(status, "Paste a URL or some text first.", "error");
+  if (!url && !text && !file) {
+    setStatus(status, "Paste a URL, some text, or upload a file.", "error");
     return;
   }
 
   btn.disabled = true;
   label.innerHTML = `<span class="spinner"></span> Processing...`;
-  setStatus(status, "Fetching, summarizing, generating audio...", "");
+  setStatus(status, file ? "Parsing file, summarizing..." : "Fetching, summarizing, generating audio...", "");
 
   try {
-    const res = await fetch(`${API}/ingest`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url: url || null, text: text || null, title: title || null }),
-    });
+    let res;
+    if (file) {
+      const fd = new FormData();
+      fd.append("file", file);
+      if (title) fd.append("title", title);
+      res = await fetch(`${API}/upload`, { method: "POST", body: fd });
+    } else {
+      res = await fetch(`${API}/ingest`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: url || null, text: text || null, title: title || null }),
+      });
+    }
 
     if (!res.ok) {
       let detail = `HTTP ${res.status}`;
@@ -149,6 +159,7 @@ async function doIngest() {
     document.getElementById("ingest-url").value = "";
     document.getElementById("ingest-text").value = "";
     document.getElementById("ingest-title").value = "";
+    clearFileInput();
 
     // Refresh UI
     await loadNotes();
@@ -160,6 +171,13 @@ async function doIngest() {
     btn.disabled = false;
     label.textContent = "Add to Mind";
   }
+}
+
+function clearFileInput() {
+  const fileInput = document.getElementById("file-upload");
+  fileInput.value = "";
+  document.getElementById("file-name").textContent = "";
+  document.getElementById("file-clear").style.display = "none";
 }
 
 function setStatus(el, msg, type) {
@@ -288,6 +306,22 @@ function bindEvents() {
   document.getElementById("ingest-url").addEventListener("keydown", e => {
     if (e.key === "Enter") doIngest();
   });
+
+  // File upload — show selected filename, clear URL/text fields
+  document.getElementById("file-upload").addEventListener("change", e => {
+    const file = e.target.files[0];
+    if (file) {
+      document.getElementById("file-name").textContent = file.name;
+      document.getElementById("file-clear").style.display = "inline-flex";
+      // Clear URL and text when a file is chosen
+      document.getElementById("ingest-url").value = "";
+      document.getElementById("ingest-text").value = "";
+    } else {
+      clearFileInput();
+    }
+  });
+
+  document.getElementById("file-clear").addEventListener("click", clearFileInput);
 }
 
 

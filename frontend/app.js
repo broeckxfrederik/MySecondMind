@@ -289,6 +289,20 @@ async function triggerRebuild() {
   }
 }
 
+async function triggerEnrich() {
+  const btn = document.getElementById("enrich-btn");
+  btn.disabled = true;
+  btn.textContent = "✦ Enriching...";
+  try {
+    await fetch(`${API}/enrich-stubs`, { method: "POST" });
+    btn.textContent = "✦ Started ✓";
+    setTimeout(() => { btn.textContent = "✦ Enrich"; btn.disabled = false; }, 3000);
+  } catch (e) {
+    btn.textContent = "✦ Error";
+    btn.disabled = false;
+  }
+}
+
 
 // ── Events ─────────────────────────────────────────────────────────────────────
 function bindEvents() {
@@ -301,6 +315,7 @@ function bindEvents() {
     if (network) network.fit({ animation: true });
   });
   document.getElementById("rebuild-btn").addEventListener("click", triggerRebuild);
+  document.getElementById("enrich-btn").addEventListener("click", triggerEnrich);
 
   // Allow pressing Enter in URL field
   document.getElementById("ingest-url").addEventListener("keydown", e => {

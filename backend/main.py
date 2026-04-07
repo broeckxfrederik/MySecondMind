@@ -178,6 +178,19 @@ async def trigger_rebuild():
     return {"status": "ok", "message": "Graph rebuilt"}
 
 
+@app.post("/enrich-stubs")
+async def trigger_enrich_stubs(background_tasks: BackgroundTasks):
+    """
+    Scan all concept stubs and enrich thin ones with a self-researched TL;DR.
+    Runs in the background — returns immediately.
+    """
+    from backend.config import CONCEPTS_DIR
+    from backend.services.enricher import enrich_all_thin_stubs
+    record_activity()
+    background_tasks.add_task(enrich_all_thin_stubs, CONCEPTS_DIR)
+    return {"status": "ok", "message": "Enrichment started in background"}
+
+
 @app.post("/consolidate-preferences")
 async def trigger_consolidation():
     """Manually trigger preference consolidation from edit log."""

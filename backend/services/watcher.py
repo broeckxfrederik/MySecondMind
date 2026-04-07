@@ -70,7 +70,7 @@ async def _handle_vault_change(file_path: str):
         except ValueError:
             rel_path = file_path
 
-        async with await get_db() as db:
+        async with get_db() as db:
             note = await get_note_by_path(db, rel_path)
             if not note:
                 return  # Not a tracked note

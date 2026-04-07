@@ -70,7 +70,7 @@ async def ingest_content(request: IngestRequest, background_tasks: BackgroundTas
 
     record_activity()
 
-    async with await get_db() as db:
+    async with get_db() as db:
         note = await ingest(
             db,
             url=request.url,
@@ -86,7 +86,7 @@ async def ingest_content(request: IngestRequest, background_tasks: BackgroundTas
 async def list_notes():
     """Return all notes ordered by most recently updated."""
     from backend.db import get_all_notes
-    async with await get_db() as db:
+    async with get_db() as db:
         notes = await get_all_notes(db)
     return notes
 
@@ -95,7 +95,7 @@ async def list_notes():
 async def get_note(note_id: str):
     """Get a single note by ID, including its file content."""
     from backend.db import get_all_notes
-    async with await get_db() as db:
+    async with get_db() as db:
         notes = await get_all_notes(db)
     for n in notes:
         if n["id"] == note_id:
@@ -109,7 +109,7 @@ async def get_note(note_id: str):
 @app.get("/graph")
 async def get_graph():
     """Return graph data for the frontend vis.js visualization."""
-    async with await get_db() as db:
+    async with get_db() as db:
         graph = await build_graph_response(db)
     return graph
 
@@ -127,7 +127,7 @@ async def get_audio(note_id: str):
 async def trigger_rebuild():
     """Manually trigger a full graph rebuild (wikilink extraction + HITS)."""
     record_activity()
-    async with await get_db() as db:
+    async with get_db() as db:
         await rebuild_graph(db)
     return {"status": "ok", "message": "Graph rebuilt"}
 
@@ -136,7 +136,7 @@ async def trigger_rebuild():
 async def trigger_consolidation():
     """Manually trigger preference consolidation from edit log."""
     record_activity()
-    async with await get_db() as db:
+    async with get_db() as db:
         await consolidate_preferences(db)
     return {"status": "ok", "message": "Preferences consolidated"}
 
@@ -153,7 +153,7 @@ async def health():
 # ── Background helpers ─────────────────────────────────────────────────────────
 
 async def _rebuild_graph_bg():
-    async with await get_db() as db:
+    async with get_db() as db:
         await rebuild_graph(db)
 
 

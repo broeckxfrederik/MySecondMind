@@ -160,7 +160,8 @@ async def delete_note(db: aiosqlite.Connection, note_id: str):
     await db.commit()
 
 
-async def upsert_hub_scores(db: aiosqlite.Connection, scores: list[dict]):    now = datetime.utcnow().isoformat()
+async def upsert_hub_scores(db: aiosqlite.Connection, scores: list[dict]):
+    now = datetime.utcnow().isoformat()
     for s in scores:
         await db.execute("""
             INSERT INTO hub_scores (note_id, hits_hub_score, hits_auth_score, updated_at)

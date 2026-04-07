@@ -66,7 +66,7 @@ def _ensure_log():
 
 async def _pick_recent_note() -> dict | None:
     from backend.db import get_db, get_all_notes
-    async with await get_db() as db:
+    async with get_db() as db:
         notes = await get_all_notes(db)
     if not notes:
         return None

@@ -13,17 +13,11 @@ services:
       - traefik_proxy
     labels:
       - "traefik.enable=true"
-      # ── Router ──────────────────────────────────────────────────────────────
       - "traefik.http.routers.mysecondmind.rule=Host(`${DOMAIN}`)"
       - "traefik.http.routers.mysecondmind.entrypoints=websecure"
       - "traefik.http.routers.mysecondmind.tls.certresolver=letsencrypt"
-      # ── Authentik forward-auth middleware ────────────────────────────────────
-      # Replace "authentik@file" with your actual Traefik middleware reference.
-      # If you define it via Docker labels in the Authentik outpost, use e.g.:
-      #   "authentik-proxy@docker"
-      - "traefik.http.routers.mysecondmind.middlewares=${AUTHENTIK_MIDDLEWARE}"
-      # ── Service ──────────────────────────────────────────────────────────────
       - "traefik.http.services.mysecondmind.loadbalancer.server.port=8000"
+      # Auth is handled globally by Traefik — no per-service middleware label needed.
 
 networks:
   traefik_proxy:

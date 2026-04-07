@@ -80,9 +80,9 @@ async def ingest(db: aiosqlite.Connection, url: str = None, text: str = None,
     domain = result["domain"]
     triples = result["triples"]
 
-    # --- Step 3: TTS ---
+    # --- Step 3: TTS (non-fatal) ---
     audio_file = await generate_tts(note_id, result["markdown"])
-    audio_rel = f"audio/{note_id}.mp3"
+    audio_rel = f"audio/{note_id}.mp3" if audio_file else None
 
     # --- Step 4: Write markdown ---
     slug = _slugify(final_title)

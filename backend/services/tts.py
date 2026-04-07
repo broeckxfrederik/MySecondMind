@@ -41,8 +41,11 @@ def _strip_markdown(text: str) -> str:
     return text.strip()
 
 
-async def generate_tts(note_id: str, text: str) -> Path:
-    """Generate an MP3 audio file for the given text. Returns the path."""
+async def generate_tts(note_id: str, text: str) -> Path | None:
+    """
+    Generate an MP3 audio file for the given text. Returns the path, or None
+    if TTS fails (e.g. upstream service outage). Ingest continues without audio.
+    """
     clean_text = _strip_markdown(text)
 
     # Truncate to ~5000 chars for reasonable audio length
@@ -51,7 +54,10 @@ async def generate_tts(note_id: str, text: str) -> Path:
 
     audio_path = AUDIO_DIR / f"{note_id}.mp3"
 
-    communicate = edge_tts.Communicate(clean_text, TTS_VOICE)
-    await communicate.save(str(audio_path))
-
-    return audio_path
+    try:
+        communicate = edge_tts.Communicate(clean_text, TTS_VOICE)
+        await communicate.save(str(audio_path))
+        return audio_path
+    except Exception as e:
+        print(f"[tts] Warning: TTS generation failed ({e}). Continuing without audio.")
+        return None

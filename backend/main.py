@@ -93,11 +93,11 @@ async def ingest_content(request: IngestRequest, background_tasks: BackgroundTas
 
 @app.get("/notes")
 async def list_notes():
-    """Return all notes ordered by most recently updated."""
+    """Return all notes whose files still exist on disk, ordered by most recently updated."""
     from backend.db import get_all_notes
     async with get_db() as db:
         notes = await get_all_notes(db)
-    return notes
+    return [n for n in notes if (BASE_DIR / n["file_path"]).exists()]
 
 
 @app.get("/notes/{note_id}")

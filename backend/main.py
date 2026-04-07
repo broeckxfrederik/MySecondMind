@@ -2,6 +2,7 @@ import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -48,6 +49,14 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+
+
+@app.exception_handler(RuntimeError)
+async def runtime_error_handler(request, exc):
+    msg = str(exc)
+    if "All LLM providers" in msg:
+        return JSONResponse(status_code=503, content={"detail": "All LLM providers are unavailable or rate-limited. Try again in a minute."})
+    return JSONResponse(status_code=500, content={"detail": msg})
 
 app.add_middleware(
     CORSMiddleware,

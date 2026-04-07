@@ -37,7 +37,7 @@ GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 
 # Google Gemini (free tier: 1500 req/day)
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
 
 # Provider priority order (first = preferred, fallback left-to-right on rate limit)
 # Only providers with a configured API key are actually used

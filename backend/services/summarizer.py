@@ -61,7 +61,15 @@ async def summarize(title: str, text: str, source_url: str = "") -> dict:
         }
     """
     preferences = _load_preferences()
+    # Cap preferences to avoid blowing out tight provider token limits (e.g. Groq TPM)
+    if len(preferences) > 3000:
+        preferences = preferences[:3000] + "\n[... truncated ...]"
     system = _build_system_prompt(preferences)
+
+    # Cap article text: system prompt ~1.5k tokens, overhead ~0.5k, output 2k → leave ~8k for text
+    # 8000 tokens × ~4 chars/token = 32000 chars, but use 8000 chars to be safe with dense content
+    if len(text) > 8000:
+        text = text[:8000] + "\n\n[... content truncated for summarization ...]"
 
     user_message = (
         f"Please summarize the following content into a structured knowledge note.\n\n"

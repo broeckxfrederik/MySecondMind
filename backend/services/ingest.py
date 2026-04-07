@@ -139,23 +139,70 @@ async def ingest(db: aiosqlite.Connection, url: str = None, text: str = None,
     return note
 
 
+def _extract_context_sentences(source_path: Path, entity: str, max_sentences: int = 2) -> str:
+    """
+    Extract up to max_sentences sentences from source_path that mention entity.
+    Strips YAML frontmatter and JSON blocks before searching.
+    Returns empty string on any failure.
+    """
+    import re as _re
+    try:
+        text = source_path.read_text(encoding="utf-8")
+        # Strip YAML frontmatter
+        if text.startswith("---"):
+            end = text.find("---", 3)
+            text = text[end + 3:] if end != -1 else text
+        # Strip JSON code blocks
+        text = _re.sub(r"```json[\s\S]*?```", "", text)
+        # Flatten to single line for sentence splitting
+        text = text.replace("\n", " ")
+        sentences = _re.split(r"(?<=[.!?])\s+", text)
+        matches = [
+            s.strip() for s in sentences
+            if entity.lower() in s.lower() and len(s.strip()) > 20
+        ]
+        return " ".join(matches[:max_sentences])
+    except Exception:
+        return ""
+
+
 async def _ensure_concept_stubs(entities: list[str], source_title: str, source_path: Path):
-    """Create minimal concept stub pages for each entity wikilink."""
+    """Create or update concept stub pages for each entity wikilink."""
     from backend.config import CONCEPTS_DIR
+    import re
 
     for entity in entities:
-        import re
         slug = re.sub(r"[^\w\s-]", "", entity.lower())
         slug = re.sub(r"[\s]+", "-", slug).strip("-")
         stub_path = CONCEPTS_DIR / f"{slug}.md"
 
         if stub_path.exists():
-            # Append backlink if not already present
             content = stub_path.read_text(encoding="utf-8")
             backlink = f"- [[{source_title}]]"
             if backlink not in content:
-                stub_path.write_text(content + f"\n{backlink}", encoding="utf-8")
+                updated = content + f"\n{backlink}"
+                # Replace placeholder once the concept is well-referenced (3+ mentions)
+                mention_count = updated.count("- [[")
+                placeholder = "> Auto-generated concept page. Edit to add your own notes."
+                if mention_count >= 3 and placeholder in updated:
+                    updated = updated.replace(
+                        placeholder,
+                        f"> Concept referenced across {mention_count} notes in this knowledge base.",
+                        1,
+                    )
+                stub_path.write_text(updated, encoding="utf-8")
         else:
+            # Context sentences from source note (no LLM call)
+            context = _extract_context_sentences(source_path, entity)
+            context_section = f"\n## Context\n\n> {context}\n" if context else ""
+
+            # Co-occurrence: link to sibling entities from the same note
+            peers = [e for e in entities if e.lower() != entity.lower()]
+            related_section = ""
+            if peers:
+                peer_links = "\n".join(f"- [[{p}]]" for p in peers)
+                related_section = f"\n## Related Concepts\n\n{peer_links}\n"
+
             stub_content = f"""---
 title: "{entity}"
 type: "concept"
@@ -167,9 +214,9 @@ aliases: []
 ## Overview
 
 > Auto-generated concept page. Edit to add your own notes.
-
+{context_section}
 ## Mentioned In
 
 - [[{source_title}]]
-"""
+{related_section}"""
             stub_path.write_text(stub_content, encoding="utf-8")

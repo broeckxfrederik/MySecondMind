@@ -28,32 +28,47 @@ def extract_wikilinks(text: str) -> list[str]:
     return [m.group(1).strip() for m in WIKILINK_RE.finditer(text)]
 
 
+# ── Triple validation ──────────────────────────────────────────────────────────
+
+def _is_valid_node(name: str) -> bool:
+    """Return False for garbage node names: empty, single char, or pure punctuation."""
+    s = name.strip()
+    if len(s) <= 2:
+        return False
+    if re.match(r"^[A-Za-z0-9]$", s):  # single alphanumeric (shouldn't hit after len check, but explicit)
+        return False
+    return True
+
+
+def _concept_id(name: str) -> str:
+    slug = re.sub(r"[^\w\s-]", "", name.lower())
+    slug = re.sub(r"\s+", "-", slug).strip("-")
+    return f"concept::{slug}"
+
+
 # ── Triple storage ─────────────────────────────────────────────────────────────
 
 async def store_triples(db: aiosqlite.Connection, source_note_id: str,
                         entities: list[str], triples: list[dict]):
     """Store semantic triples from summarizer output as graph edges."""
-    # Build entity → note_id mapping from concept stubs (approximate)
-    # For now: source note "mentions" each entity concept node
-    from backend.config import CONCEPTS_DIR
-    import hashlib
-
     for entity in entities:
-        # Use a deterministic ID for concept nodes: "concept::<slug>"
-        slug = re.sub(r"[^\w\s-]", "", entity.lower())
-        slug = re.sub(r"\s+", "-", slug).strip("-")
-        concept_id = f"concept::{slug}"
-        await upsert_edge(db, source_note_id, concept_id, "mentions", 1.0)
+        if not _is_valid_node(entity):
+            continue
+        await upsert_edge(db, source_note_id, _concept_id(entity), "mentions", 1.0)
 
-    # Store richer semantic triples
     for triple in triples:
-        subj = triple.get("subject", "")
-        pred = triple.get("predicate", "mentions")
-        obj = triple.get("object", "")
-        if subj and obj:
-            subj_id = f"concept::{re.sub(r'[^\\w]', '-', subj.lower())}"
-            obj_id = f"concept::{re.sub(r'[^\\w]', '-', obj.lower())}"
-            await upsert_edge(db, subj_id, obj_id, pred, 1.0)
+        subj = triple.get("subject", "").strip()
+        pred = triple.get("predicate", "mentions").strip() or "mentions"
+        obj = triple.get("object", "").strip()
+
+        if not subj or not obj:
+            continue
+        if subj.lower() == obj.lower():          # no self-loops
+            continue
+        if not _is_valid_node(subj) or not _is_valid_node(obj):
+            continue
+
+        await upsert_edge(db, _concept_id(subj), _concept_id(obj), pred, 1.0)
 
 
 # ── Full graph rebuild ─────────────────────────────────────────────────────────

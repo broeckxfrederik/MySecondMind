@@ -35,9 +35,11 @@ Always output a complete markdown note including:
 4. ## Connections section (how this links to other concepts, using [[wikilinks]])
 
 Entity/concept extraction rules:
-- Extract 3–8 key concepts as [[wikilinks]] inline in the text
-- Use Title Case for wikilinks
-- Focus on concepts, tools, methods, and ideas — not just names
+- You MUST embed [[wikilinks]] for every key concept the FIRST time it appears in the text.
+- Aim for 3–8 wikilinks total; no section (TL;DR, Key Ideas, Connections) should be free of at least one [[wikilink]].
+- Use Title Case: [[Machine Learning]], [[Knowledge Graph]], [[Semantic Triple]], etc.
+- Focus on concepts, tools, methods, and ideas — not just names.
+- CRITICAL: If you omit wikilinks the downstream knowledge graph breaks. Always include them.
 - Also return a JSON block at the very end (after a horizontal rule) with extracted metadata:
 
 ---

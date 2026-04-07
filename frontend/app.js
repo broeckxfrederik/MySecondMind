@@ -133,8 +133,13 @@ async function doIngest() {
     });
 
     if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.detail || "Unknown error");
+      let detail = `HTTP ${res.status}`;
+      try {
+        const body = await res.text();
+        const json = JSON.parse(body);
+        detail = json.detail || detail;
+      } catch (_) { /* non-JSON error body */ }
+      throw new Error(detail);
     }
 
     const data = await res.json();

@@ -10,7 +10,7 @@ services:
       - ./ai-knowledge:/app/ai-knowledge
       - ./data:/app/data
     networks:
-      - traefik_proxy
+      - proxy
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.mysecondmind.rule=Host(`${DOMAIN}`)"
@@ -20,5 +20,5 @@ services:
       # Auth is handled globally by Traefik — no per-service middleware label needed.
 
 networks:
-  traefik_proxy:
+  proxy:
     external: true

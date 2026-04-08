@@ -83,9 +83,13 @@ async def enrich_stubs_batch(stubs: list[tuple[Path, str]]):
     """
     Enrich a list of (stub_path, entity_name) pairs.
 
+    Capped at 3 per auto-ingest call to avoid exhausting free-tier quotas.
+    The /enrich-stubs endpoint calls enrich_all_thin_stubs() for bulk work.
+
     Waits 2 s before starting so the HTTP response that triggered ingest
     has already returned. Adds 0.5 s between calls to avoid rate-limit bursts.
     """
+    stubs = stubs[:3]
     await asyncio.sleep(2)
     for stub_path, entity in stubs:
         try:

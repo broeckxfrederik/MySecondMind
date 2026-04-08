@@ -47,6 +47,9 @@ PROVIDER_ORDER: list[str] = [p.strip() for p in _raw_order.split(",") if p.strip
 # Seconds a provider stays in cooldown after hitting a rate limit
 PROVIDER_COOLDOWN_SECONDS = int(os.getenv("PROVIDER_COOLDOWN_SECONDS", "60"))
 
+# Minimum hours between cross-validation passes (prevents exhausting free-tier quotas)
+VALIDATE_MIN_HOURS = float(os.getenv("VALIDATE_MIN_HOURS", "24"))
+
 # ── TTS ────────────────────────────────────────────────────────────────────────
 TTS_VOICE = os.getenv("TTS_VOICE", "en-GB-RyanNeural")
 

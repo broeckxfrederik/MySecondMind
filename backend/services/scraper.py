@@ -109,6 +109,10 @@ def _trafilatura_extract(html: str, url: str) -> ScrapedPage | None:
     return ScrapedPage(title=_extract_title(html, url), text=extracted[:12000], url=url)
 
 
+def _is_liveblog(url: str) -> bool:
+    return "/liveblog/" in url.lower()
+
+
 async def scrape_url(url: str) -> ScrapedPage:
     headers = {
         "User-Agent": (
@@ -131,29 +135,38 @@ async def scrape_url(url: str) -> ScrapedPage:
     html = await _trafilatura_fetch(url)
     if html:
         result = _trafilatura_extract(html, url)
-        if result:
-            return result
-        # trafilatura fetched but extracted too little — try BS fallback on same html
-        return _bs_fallback(html, url)
+        if not result:
+            # trafilatura fetched but extracted too little — try BS fallback on same html
+            result = _bs_fallback(html, url)
+    else:
+        # ── trafilatura fetch failed (blocked/timeout) — try httpx ────────────
+        try:
+            async with httpx.AsyncClient(follow_redirects=True, timeout=30.0) as client:
+                response = await client.get(url, headers=headers)
+                response.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            status = e.response.status_code
+            if status == 403:
+                raise HTTPException(
+                    status_code=422,
+                    detail="The site blocked scraping (403). Paste the article text directly instead."
+                )
+            raise HTTPException(status_code=422, detail=f"Failed to fetch URL (HTTP {status}): {url}")
+        except httpx.RequestError as e:
+            raise HTTPException(status_code=422, detail=f"Could not reach URL: {e}")
 
-    # ── trafilatura fetch failed (blocked/timeout) — try httpx ────────────────
-    try:
-        async with httpx.AsyncClient(follow_redirects=True, timeout=30.0) as client:
-            response = await client.get(url, headers=headers)
-            response.raise_for_status()
-    except httpx.HTTPStatusError as e:
-        status = e.response.status_code
-        if status == 403:
-            raise HTTPException(
-                status_code=422,
-                detail="The site blocked scraping (403). Paste the article text directly instead."
+        html = response.text
+        result = _trafilatura_extract(html, url) or _bs_fallback(html, url)
+
+    # ── Liveblog check: these pages are JS-rendered and extract poorly ─────────
+    if _is_liveblog(url) and len(result.text.strip()) < 500:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "This appears to be a liveblog. Liveblogs are JavaScript-rendered "
+                "and typically can't be scraped reliably. "
+                "Try a specific article URL from the same site, or paste the content directly."
             )
-        raise HTTPException(status_code=422, detail=f"Failed to fetch URL (HTTP {status}): {url}")
-    except httpx.RequestError as e:
-        raise HTTPException(status_code=422, detail=f"Could not reach URL: {e}")
+        )
 
-    html = response.text
-    result = _trafilatura_extract(html, url)
-    if result:
-        return result
-    return _bs_fallback(html, url)
+    return result

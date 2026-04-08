@@ -26,6 +26,7 @@ from backend.config import (
     AI_KNOWLEDGE_DIR,
     IDLE_AFTER_MINUTES,
     VALIDATE_INTERVAL_MINUTES,
+    VALIDATE_MIN_HOURS,
 )
 from backend.services.llm import complete, available_providers
 from backend.services.summarizer import _load_preferences, _build_system_prompt
@@ -33,6 +34,7 @@ from backend.services.summarizer import _load_preferences, _build_system_prompt
 VALIDATION_LOG = AI_KNOWLEDGE_DIR / "cross-validation.md"
 
 _last_activity: float = 0.0
+_last_validated_at: float = 0.0  # monotonic timestamp of the last completed validation pass
 
 
 # ── Activity tracking ──────────────────────────────────────────────────────────
@@ -309,11 +311,22 @@ async def validation_loop():
     while True:
         await asyncio.sleep(interval)
         idle = _seconds_since_activity()
-        if idle >= idle_threshold:
-            print(f"[validator] Idle {idle / 60:.1f}m — running 3-round validation")
-            try:
-                await _validate_once()
-            except Exception as e:
-                print(f"[validator] Error: {e}")
-        else:
+        if idle < idle_threshold:
             print(f"[validator] Not idle enough ({idle / 60:.1f}m < {IDLE_AFTER_MINUTES}m)")
+            continue
+
+        # Guard: run at most once every VALIDATE_MIN_HOURS to avoid exhausting free-tier quotas
+        global _last_validated_at
+        min_gap = VALIDATE_MIN_HOURS * 3600
+        elapsed_since_last = time.monotonic() - _last_validated_at
+        if _last_validated_at > 0 and elapsed_since_last < min_gap:
+            remaining_h = (min_gap - elapsed_since_last) / 3600
+            print(f"[validator] Validated {elapsed_since_last / 3600:.1f}h ago — next in {remaining_h:.1f}h")
+            continue
+
+        print(f"[validator] Idle {idle / 60:.1f}m — running 3-round validation")
+        try:
+            await _validate_once()
+            _last_validated_at = time.monotonic()
+        except Exception as e:
+            print(f"[validator] Error: {e}")

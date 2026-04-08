@@ -8,7 +8,7 @@ import threading
 import time
 from pathlib import Path
 
-from watchdog.events import FileSystemEventHandler, FileModifiedEvent, FileCreatedEvent
+from watchdog.events import FileSystemEventHandler, FileModifiedEvent, FileCreatedEvent, FileDeletedEvent
 from watchdog.observers import Observer
 
 from backend.config import VAULT_DIR
@@ -35,6 +35,15 @@ class VaultEventHandler(FileSystemEventHandler):
             return
         self._schedule(event.src_path)
 
+    def on_deleted(self, event):
+        if event.is_directory:
+            return
+        if not str(event.src_path).endswith(".md"):
+            return
+        asyncio.run_coroutine_threadsafe(
+            _handle_vault_delete(event.src_path), self._loop
+        )
+
     def _schedule(self, path: str):
         self._debounce[path] = time.monotonic()
         asyncio.run_coroutine_threadsafe(
@@ -47,6 +56,27 @@ class VaultEventHandler(FileSystemEventHandler):
         if time.monotonic() - self._debounce.get(path, 0) < self._debounce_sec - 0.1:
             return
         await _handle_vault_change(path)
+
+
+async def _handle_vault_delete(file_path: str):
+    """Called when a vault .md file is deleted. Removes it from the DB."""
+    try:
+        from backend.db import get_db, get_note_by_path, delete_note
+
+        path = Path(file_path)
+        try:
+            rel_path = str(path.relative_to(VAULT_DIR.parent))
+        except ValueError:
+            rel_path = file_path
+
+        async with get_db() as db:
+            note = await get_note_by_path(db, rel_path)
+            if note:
+                await delete_note(db, note["id"])
+                print(f"[watcher] Removed deleted note from DB: {rel_path}")
+
+    except Exception as e:
+        print(f"[watcher] Error handling deletion for {file_path}: {e}")
 
 
 async def _handle_vault_change(file_path: str):

@@ -151,6 +151,15 @@ async def mark_edits_analyzed(db: aiosqlite.Connection, ids: list[int]):
     await db.commit()
 
 
+async def delete_note(db: aiosqlite.Connection, note_id: str):
+    """Remove a note and all its associated edges, scores, and edit records."""
+    await db.execute("DELETE FROM edges WHERE source_id = ? OR target_id = ?", (note_id, note_id))
+    await db.execute("DELETE FROM hub_scores WHERE note_id = ?", (note_id,))
+    await db.execute("DELETE FROM edits WHERE note_id = ?", (note_id,))
+    await db.execute("DELETE FROM notes WHERE id = ?", (note_id,))
+    await db.commit()
+
+
 async def upsert_hub_scores(db: aiosqlite.Connection, scores: list[dict]):
     now = datetime.utcnow().isoformat()
     for s in scores:

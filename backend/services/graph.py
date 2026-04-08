@@ -15,7 +15,7 @@ import numpy as np
 from backend.config import VAULT_DIR
 from backend.db import (
     upsert_edge, get_all_edges, get_all_notes,
-    upsert_hub_scores, get_hub_scores
+    upsert_hub_scores, get_hub_scores, delete_note
 )
 
 
@@ -77,10 +77,26 @@ async def rebuild_graph(db: aiosqlite.Connection):
     """
     Scans all vault markdown files, rebuilds edges from [[wikilinks]],
     then runs HITS + Jaccard scoring.
+    Clears all edges and scores first so stale data never survives a rebuild.
     """
-    notes = await get_all_notes(db)
-    note_by_title: dict[str, str] = {}  # title (lower) → note_id
+    # Wipe edges and scores — rebuild will repopulate from scratch
+    await db.execute("DELETE FROM edges")
+    await db.execute("DELETE FROM hub_scores")
+    await db.commit()
 
+    all_notes = await get_all_notes(db)
+
+    # Prune notes whose files no longer exist on disk
+    notes = []
+    for note in all_notes:
+        vault_path = VAULT_DIR.parent / note["file_path"]
+        if not vault_path.exists():
+            await delete_note(db, note["id"])
+            print(f"[graph] Pruned orphaned note: {note['file_path']}")
+        else:
+            notes.append(note)
+
+    note_by_title: dict[str, str] = {}  # title (lower) → note_id
     for note in notes:
         note_by_title[note["title"].lower()] = note["id"]
 

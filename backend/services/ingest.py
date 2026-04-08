@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 import hashlib
 from datetime import datetime
@@ -10,6 +11,7 @@ from backend.db import upsert_note, get_all_notes
 from backend.services.scraper import scrape_url
 from backend.services.summarizer import summarize
 from backend.services.tts import generate_tts
+from backend.services.enricher import enrich_stubs_batch
 
 
 def _slugify(title: str) -> str:
@@ -107,7 +109,10 @@ async def ingest(db: aiosqlite.Connection, url: str = None, text: str = None,
     md_path.write_text(full_md, encoding="utf-8")
 
     # Also create concept stub pages for each entity
-    await _ensure_concept_stubs(entities, final_title, md_path)
+    thin_stubs = await _ensure_concept_stubs(entities, final_title, md_path)
+    # Enrich new stubs that have no source-extracted context — fire and forget
+    if thin_stubs:
+        asyncio.create_task(enrich_stubs_batch(thin_stubs))
 
     # --- Step 5: Save to DB ---
     file_path_rel = str(md_path.relative_to(md_path.parent.parent.parent))
@@ -166,10 +171,19 @@ def _extract_context_sentences(source_path: Path, entity: str, max_sentences: in
         return ""
 
 
-async def _ensure_concept_stubs(entities: list[str], source_title: str, source_path: Path):
-    """Create or update concept stub pages for each entity wikilink."""
+async def _ensure_concept_stubs(
+    entities: list[str], source_title: str, source_path: Path
+) -> list[tuple[Path, str]]:
+    """
+    Create or update concept stub pages for each entity wikilink.
+
+    Returns a list of (stub_path, entity) for newly created stubs that have
+    no extracted context — these are candidates for LLM enrichment.
+    """
     from backend.config import CONCEPTS_DIR
     import re
+
+    thin_stubs: list[tuple[Path, str]] = []
 
     for entity in entities:
         slug = re.sub(r"[^\w\s-]", "", entity.lower())
@@ -181,7 +195,7 @@ async def _ensure_concept_stubs(entities: list[str], source_title: str, source_p
             backlink = f"- [[{source_title}]]"
             if backlink not in content:
                 updated = content + f"\n{backlink}"
-                # Replace placeholder once the concept is well-referenced (3+ mentions)
+                # Upgrade placeholder once concept is well-referenced (3+ notes)
                 mention_count = updated.count("- [[")
                 placeholder = "> Auto-generated concept page. Edit to add your own notes."
                 if mention_count >= 3 and placeholder in updated:
@@ -220,3 +234,9 @@ aliases: []
 - [[{source_title}]]
 {related_section}"""
             stub_path.write_text(stub_content, encoding="utf-8")
+
+            # Queue for LLM enrichment only if there are no context sentences
+            if not context:
+                thin_stubs.append((stub_path, entity))
+
+    return thin_stubs

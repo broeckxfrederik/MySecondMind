@@ -110,6 +110,17 @@
     .btn-ghost { background: var(--surface2); color: var(--text-dim); }
     .btn-ghost:hover { color: var(--text); background: var(--border); }
 
+    .btn-secondary { background: var(--surface2); color: var(--text-dim); border: 1px solid var(--border); }
+    .btn-secondary:hover { color: var(--text); border-color: var(--accent); }
+
+    .upload-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .upload-row label.btn { flex-shrink: 0; font-size: 12px; padding: 6px 10px; }
+
     .ingest-status { font-size: 12px; color: var(--text-dim); min-height: 16px; }
     .ingest-status.error { color: var(--danger); }
     .ingest-status.success { color: var(--note-color); }
@@ -305,6 +316,12 @@
       <input type="text" id="ingest-url" placeholder="Paste a URL..." />
       <textarea id="ingest-text" placeholder="...or paste raw text / notes here"></textarea>
       <input type="text" id="ingest-title" placeholder="Optional title" />
+      <div class="upload-row">
+        <label class="btn btn-secondary" for="file-upload" title="Upload an ePub or PDF">📎 Upload file</label>
+        <input type="file" id="file-upload" accept=".epub,.pdf" style="display:none" />
+        <span id="file-name" style="color:var(--text-dim);font-size:0.85em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1"></span>
+        <button class="btn btn-ghost btn-sm" id="file-clear" style="display:none;padding:3px 7px;font-size:11px" title="Clear file">✕</button>
+      </div>
       <button class="btn btn-primary" id="ingest-btn">
         <span id="ingest-btn-label">Add to Mind</span>
       </button>
@@ -329,6 +346,7 @@
       <div class="graph-toolbar">
         <button class="btn btn-ghost btn-sm" id="fit-btn" title="Fit to screen">⊞ Fit</button>
         <button class="btn btn-ghost btn-sm" id="rebuild-btn" title="Rebuild graph">⟳ Rebuild</button>
+        <button class="btn btn-ghost btn-sm" id="enrich-btn" title="Enrich empty concept stubs with self-researched TL;DRs">✦ Enrich</button>
       </div>
       <div class="graph-legend">
         <div class="legend-item"><div class="legend-dot" style="background:#22d3ee"></div>Link</div>
